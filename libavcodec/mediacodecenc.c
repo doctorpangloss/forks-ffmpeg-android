@@ -71,6 +71,8 @@ typedef struct MediaCodecEncContext {
     int fps;
     int width;
     int height;
+    int output_width;
+    int output_height;
 
     uint8_t *extradata;
     int extradata_size;
@@ -428,6 +430,25 @@ static av_cold int mediacodec_init(AVCodecContext *avctx)
         break;
     default:
         av_assert0(0);
+    }
+
+    if ((s->output_width > 0) != (s->output_height > 0)) {
+        av_log(avctx, AV_LOG_ERROR,
+               "Both output_width and output_height must be set together\n");
+        return AVERROR(EINVAL);
+    }
+    if (avctx->pix_fmt != AV_PIX_FMT_MEDIACODEC &&
+        (s->output_width > 0 || s->output_height > 0)) {
+        av_log(avctx, AV_LOG_ERROR,
+               "output_width/output_height are only supported for MediaCodec surface input\n");
+        return AVERROR(EINVAL);
+    }
+    if (s->output_width > 0) {
+        av_log(avctx, AV_LOG_INFO,
+               "Using MediaCodec surface output size %dx%d for %dx%d input frames\n",
+               s->output_width, s->output_height, avctx->width, avctx->height);
+        avctx->width = s->output_width;
+        avctx->height = s->output_height;
     }
 
     if (s->name)
@@ -805,8 +826,12 @@ static int mediacodec_send(AVCodecContext *avctx,
             return ff_AMediaCodec_signalEndOfInputStream(codec);
         }
 
-        if (frame->data[3])
-            av_mediacodec_release_buffer((AVMediaCodecBuffer *)frame->data[3], 1);
+        if (frame->data[3]) {
+            int64_t time = av_rescale_q(frame->pts, avctx->time_base,
+                                        (AVRational){ 1, 1000000000 });
+            av_mediacodec_render_buffer_at_time((AVMediaCodecBuffer *)frame->data[3],
+                                                time);
+        }
         return 0;
     }
 
@@ -1046,6 +1071,10 @@ static const FFCodecDefault mediacodec_defaults[] = {
                     OFFSET(async_mode), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, VE },                           \
     { "codec_name", "Select codec by name",                                                                 \
                     OFFSET(name), AV_OPT_TYPE_STRING, {0}, 0, 0, VE },                                      \
+    { "output_width", "MediaCodec surface encoder output width",                                           \
+                    OFFSET(output_width), AV_OPT_TYPE_INT, {.i64 = 0}, 0, INT_MAX, VE },                    \
+    { "output_height", "MediaCodec surface encoder output height",                                         \
+                    OFFSET(output_height), AV_OPT_TYPE_INT, {.i64 = 0}, 0, INT_MAX, VE },                   \
     { "bitrate_mode", "Bitrate control method",                                                             \
                     OFFSET(bitrate_mode), AV_OPT_TYPE_INT, {.i64 = -1}, -1, INT_MAX, VE, .unit = "bitrate_mode" },  \
     { "cq", "Constant quality mode",                                                                                \
