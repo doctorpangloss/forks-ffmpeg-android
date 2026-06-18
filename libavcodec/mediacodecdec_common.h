@@ -29,6 +29,7 @@
 #include <sys/types.h>
 
 #include "libavutil/frame.h"
+#include "libavutil/buffer.h"
 #include "libavutil/pixfmt.h"
 
 #include "avcodec.h"
@@ -44,6 +45,7 @@ typedef struct MediaCodecDecContext {
 
     FFAMediaCodec *codec;
     FFAMediaFormat *format;
+    AVBufferRef *hw_frames_ctx;
 
     void *surface;
 

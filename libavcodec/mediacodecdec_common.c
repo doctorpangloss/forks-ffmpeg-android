@@ -25,6 +25,7 @@
 
 #include "libavutil/avassert.h"
 #include "libavutil/common.h"
+#include "libavutil/hwcontext.h"
 #include "libavutil/hwcontext_mediacodec.h"
 #include "libavutil/mem.h"
 #include "libavutil/log.h"
@@ -265,6 +266,8 @@ static void ff_mediacodec_dec_unref(MediaCodecDecContext *s)
             s->format = NULL;
         }
 
+        av_buffer_unref(&s->hw_frames_ctx);
+
         if (s->surface) {
             ff_mediacodec_surface_unref(s->surface, NULL);
             s->surface = NULL;
@@ -308,6 +311,11 @@ static int mediacodec_wrap_hw_buffer(AVCodecContext *avctx,
     frame->height = avctx->height;
     frame->format = avctx->pix_fmt;
     frame->sample_aspect_ratio = avctx->sample_aspect_ratio;
+    frame->hw_frames_ctx = av_buffer_ref(s->hw_frames_ctx);
+    if (!frame->hw_frames_ctx) {
+        ret = AVERROR(ENOMEM);
+        goto fail;
+    }
 
     if (avctx->pkt_timebase.num && avctx->pkt_timebase.den) {
         frame->pts = av_rescale_q(info->presentationTimeUs,
@@ -358,6 +366,7 @@ static int mediacodec_wrap_hw_buffer(AVCodecContext *avctx,
 
     return 0;
 fail:
+    av_buffer_unref(&frame->hw_frames_ctx);
     av_freep(&buffer);
     status = ff_AMediaCodec_releaseOutputBuffer(s->codec, index, 0);
     if (status < 0) {
@@ -744,6 +753,7 @@ static int mediacodec_dec_get_video_codec(AVCodecContext *avctx, MediaCodecDecCo
                                           const char *mime, FFAMediaFormat *format)
 {
     int profile;
+    int ret;
 
     enum AVPixelFormat pix_fmt;
     static const enum AVPixelFormat pix_fmts[] = {
@@ -769,6 +779,29 @@ static int mediacodec_dec_get_video_codec(AVCodecContext *avctx, MediaCodecDecCo
         if (!s->surface && user_ctx && user_ctx->surface) {
             s->surface = ff_mediacodec_surface_ref(user_ctx->surface, NULL, avctx);
             av_log(avctx, AV_LOG_INFO, "Using surface %p\n", s->surface);
+        }
+
+        if (s->surface && avctx->hw_device_ctx && !s->hw_frames_ctx) {
+            AVHWFramesContext *frames_ctx;
+
+            s->hw_frames_ctx = av_hwframe_ctx_alloc(avctx->hw_device_ctx);
+            if (!s->hw_frames_ctx)
+                return AVERROR(ENOMEM);
+
+            frames_ctx = (AVHWFramesContext *)s->hw_frames_ctx->data;
+            frames_ctx->format    = AV_PIX_FMT_MEDIACODEC;
+            frames_ctx->sw_format = AV_PIX_FMT_NV12;
+            frames_ctx->width     = avctx->width;
+            frames_ctx->height    = avctx->height;
+
+            ret = av_hwframe_ctx_init(s->hw_frames_ctx);
+            if (ret < 0) {
+                av_log(avctx, AV_LOG_ERROR,
+                       "Failed to initialize MediaCodec hardware frames context: %s\n",
+                       av_err2str(ret));
+                av_buffer_unref(&s->hw_frames_ctx);
+                return ret;
+            }
         }
     }
 
