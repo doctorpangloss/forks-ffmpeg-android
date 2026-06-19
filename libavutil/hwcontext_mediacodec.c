@@ -21,6 +21,7 @@
 #include <android/native_window.h>
 #include <dlfcn.h>
 #include <media/NdkMediaCodec.h>
+#include <media/NdkImageReader.h>
 
 #include "buffer.h"
 #include "common.h"
@@ -51,6 +52,8 @@ static int mc_device_create(AVHWDeviceContext *ctx, const char *device,
     while ((entry = av_dict_iterate(opts, entry))) {
         if (!strcmp(entry->key, "create_window"))
             dev->create_window = atoi(entry->value);
+        else if (!strcmp(entry->key, "surface_processor"))
+            dev->surface_processor_enabled = atoi(entry->value);
     }
 
     av_log(ctx, AV_LOG_DEBUG, "%s createPersistentInputSurface\n",
@@ -86,6 +89,7 @@ static int mc_device_init(AVHWDeviceContext *ctx)
 
     s->create_surface(&native_window);
     dev->native_window = native_window;
+    dev->encoder_native_window = native_window;
     return 0;
 }
 
@@ -96,9 +100,16 @@ static void mc_device_uninit(AVHWDeviceContext *ctx)
     if (!s->libmedia)
         return;
 
+    if (dev->image_reader) {
+        AImageReader_delete(dev->image_reader);
+        dev->image_reader = NULL;
+        dev->decoder_native_window = NULL;
+    }
+
     if (dev->native_window) {
         ANativeWindow_release(dev->native_window);
         dev->native_window = NULL;
+        dev->encoder_native_window = NULL;
     }
     dlclose(s->libmedia);
     s->libmedia = NULL;

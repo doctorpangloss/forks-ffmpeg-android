@@ -45,6 +45,30 @@ typedef struct AVMediaCodecDeviceContext {
     void *native_window;
 
     /**
+     * Optional decoder output window and encoder input window for a GLES
+     * surface processor. The decoder renders into decoder_native_window,
+     * the processor samples those buffers, then draws into
+     * encoder_native_window.
+     */
+    void *decoder_native_window;
+    void *encoder_native_window;
+
+    /**
+     * Enable native decoder-surface -> GLES -> encoder-surface processing.
+     *
+     * It can be enabled with:
+     *   -init_hw_device mediacodec=mediacodec,create_window=1:surface_processor=1
+     */
+    int surface_processor_enabled;
+
+    /**
+     * Private AImageReader and GLES processor owned by the hwdevice when
+     * surface_processor_enabled is set.
+     */
+    void *image_reader;
+    void *surface_processor;
+
+    /**
      * Enable createPersistentInputSurface automatically.
      *
      * Disabled by default.

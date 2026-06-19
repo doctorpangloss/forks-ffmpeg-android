@@ -38,6 +38,7 @@
 #include "hwconfig.h"
 #include "jni.h"
 #include "mediacodec.h"
+#include "mediacodec_gl.h"
 #include "mediacodec_wrapper.h"
 #include "mediacodecdec_common.h"
 #include "profiles.h"
@@ -73,6 +74,8 @@ typedef struct MediaCodecEncContext {
     int height;
     int output_width;
     int output_height;
+    int surface_tonemap;
+    AVMediaCodecDeviceContext *device_ctx;
 
     uint8_t *extradata;
     int extradata_size;
@@ -450,6 +453,12 @@ static av_cold int mediacodec_init(AVCodecContext *avctx)
         avctx->width = s->output_width;
         avctx->height = s->output_height;
     }
+    if (s->surface_tonemap) {
+        avctx->color_range = AVCOL_RANGE_MPEG;
+        avctx->color_primaries = AVCOL_PRI_BT709;
+        avctx->color_trc = AVCOL_TRC_BT709;
+        avctx->colorspace = AVCOL_SPC_BT709;
+    }
 
     if (s->name)
         s->codec = ff_AMediaCodec_createCodecByName(s->name, s->use_ndk_codec);
@@ -497,7 +506,11 @@ static av_cold int mediacodec_init(AVCodecContext *avctx)
                 goto bailout;
             }
             dev_ctx = device_ctx->hwctx;
-            s->window = ff_mediacodec_surface_ref(dev_ctx->surface, dev_ctx->native_window, avctx);
+            s->device_ctx = dev_ctx;
+            s->window = ff_mediacodec_surface_ref(dev_ctx->surface,
+                                                  dev_ctx->encoder_native_window ?
+                                                  dev_ctx->encoder_native_window :
+                                                  dev_ctx->native_window, avctx);
         }
 
         if (!s->window && user_ctx && user_ctx->surface)
@@ -829,8 +842,16 @@ static int mediacodec_send(AVCodecContext *avctx,
         if (frame->data[3]) {
             int64_t time = av_rescale_q(frame->pts, avctx->time_base,
                                         (AVRational){ 1, 1000000000 });
-            av_mediacodec_render_buffer_at_time((AVMediaCodecBuffer *)frame->data[3],
-                                                time);
+            if (s->device_ctx && s->device_ctx->surface_processor_enabled) {
+                ret = ff_mediacodec_gl_process(avctx, s->device_ctx,
+                                               (AVMediaCodecBuffer *)frame->data[3],
+                                               frame, s->surface_tonemap);
+                if (ret < 0)
+                    return ret;
+            } else {
+                av_mediacodec_render_buffer_at_time((AVMediaCodecBuffer *)frame->data[3],
+                                                    time);
+            }
         }
         return 0;
     }
@@ -1026,6 +1047,9 @@ static av_cold int mediacodec_close(AVCodecContext *avctx)
         s->window = NULL;
     }
 
+    if (s->device_ctx && s->device_ctx->surface_processor)
+        ff_mediacodec_gl_uninit(&s->device_ctx->surface_processor);
+
     av_bsf_free(&s->bsf);
     av_frame_free(&s->frame);
 
@@ -1075,6 +1099,8 @@ static const FFCodecDefault mediacodec_defaults[] = {
                     OFFSET(output_width), AV_OPT_TYPE_INT, {.i64 = 0}, 0, INT_MAX, VE },                    \
     { "output_height", "MediaCodec surface encoder output height",                                         \
                     OFFSET(output_height), AV_OPT_TYPE_INT, {.i64 = 0}, 0, INT_MAX, VE },                   \
+    { "surface_tonemap", "Tone map HDR/BT.2020 MediaCodec surface input with GLES",                       \
+                    OFFSET(surface_tonemap), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, VE },                     \
     { "bitrate_mode", "Bitrate control method",                                                             \
                     OFFSET(bitrate_mode), AV_OPT_TYPE_INT, {.i64 = -1}, -1, INT_MAX, VE, .unit = "bitrate_mode" },  \
     { "cq", "Constant quality mode",                                                                                \

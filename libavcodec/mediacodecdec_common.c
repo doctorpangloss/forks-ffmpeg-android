@@ -23,6 +23,10 @@
 #include <string.h>
 #include <sys/types.h>
 
+#include <android/hardware_buffer.h>
+#include <media/NdkImage.h>
+#include <media/NdkImageReader.h>
+
 #include "libavutil/avassert.h"
 #include "libavutil/common.h"
 #include "libavutil/hwcontext.h"
@@ -770,7 +774,33 @@ static int mediacodec_dec_get_video_codec(AVCodecContext *avctx, MediaCodecDecCo
             if (device_ctx->type == AV_HWDEVICE_TYPE_MEDIACODEC) {
                 if (device_ctx->hwctx) {
                     AVMediaCodecDeviceContext *mediacodec_ctx = (AVMediaCodecDeviceContext *)device_ctx->hwctx;
-                    s->surface = ff_mediacodec_surface_ref(mediacodec_ctx->surface, mediacodec_ctx->native_window, avctx);
+                    if (mediacodec_ctx->surface_processor_enabled && !mediacodec_ctx->decoder_native_window) {
+                        ANativeWindow *window = NULL;
+                        media_status_t status;
+
+                        status = AImageReader_newWithUsage(avctx->width, avctx->height,
+                                                            AIMAGE_FORMAT_PRIVATE,
+                                                            AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE,
+                                                            3, (AImageReader **)&mediacodec_ctx->image_reader);
+                        if (status != AMEDIA_OK) {
+                            av_log(avctx, AV_LOG_ERROR,
+                                   "Failed to create MediaCodec GLES AImageReader: %d\n", status);
+                            return AVERROR_EXTERNAL;
+                        }
+
+                        status = AImageReader_getWindow(mediacodec_ctx->image_reader, &window);
+                        if (status != AMEDIA_OK || !window) {
+                            av_log(avctx, AV_LOG_ERROR,
+                                   "Failed to acquire MediaCodec GLES decoder window: %d\n", status);
+                            return AVERROR_EXTERNAL;
+                        }
+                        mediacodec_ctx->decoder_native_window = window;
+                    }
+
+                    s->surface = ff_mediacodec_surface_ref(mediacodec_ctx->surface,
+                                                           mediacodec_ctx->decoder_native_window ?
+                                                           mediacodec_ctx->decoder_native_window :
+                                                           mediacodec_ctx->native_window, avctx);
                     av_log(avctx, AV_LOG_INFO, "Using surface %p\n", s->surface);
                 }
             }
