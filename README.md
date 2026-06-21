@@ -43,3 +43,43 @@ GPL. Please refer to the LICENSE file for detailed information.
 Patches should be submitted to the ffmpeg-devel mailing list using
 `git format-patch` or `git send-email`. Github pull requests should be
 avoided because they are not part of our review process and will be ignored.
+# Android MediaCodec FFmpeg Fork For Jellyfin Android Transcoder
+
+This public fork carries the FFmpeg patches used by the Android worker app in:
+
+```text
+https://github.com/doctorpangloss/jellyfin-android-transcoder
+```
+
+Related repositories:
+
+- Android worker + Jellyfin plugin: https://github.com/doctorpangloss/jellyfin-android-transcoder
+- Patched FFmpeg fork: https://github.com/doctorpangloss/forks-ffmpeg-android
+- Integration tests: https://github.com/doctorpangloss/jellyfin-android-transcoder-integration
+
+The active branch is:
+
+```text
+mediacodec-surface-hwframes
+```
+
+The Android app release does not require end users to build this repository. The `jellyfin-android-transcoder` APK/AAB already includes `libffmpeg.so` for `arm64-v8a`, `armeabi-v7a`, `x86`, and `x86_64`.
+
+Agents rebuilding FFmpeg should run from the component repository:
+
+```bash
+cd /path/to/jellyfin-android-transcoder
+FFMPEG_SRC=/path/to/forks-ffmpeg-android \
+ANDROID_NDK_ROOT=/path/to/android-ndk-r27d \
+./scripts/build-android-ffmpeg.sh
+```
+
+That script builds static FFmpeg executables packaged as Android native libraries at:
+
+```text
+android-transcoder/app/src/main/jniLibs/<abi>/libffmpeg.so
+```
+
+The build uses Android MediaCodec/GLES patches for surface-backed decode/encode and links with 16 KB page-size flags for modern Android devices.
+
+---
