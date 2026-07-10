@@ -65,6 +65,8 @@ mediacodec-surface-hwframes
 
 The Android app release does not require end users to build this repository. The `jellyfin-android-transcoder` APK/AAB already includes `libffmpeg.so` for `arm64-v8a`, `armeabi-v7a`, `x86`, and `x86_64`.
 
+The FFmpeg revision used by the verified `jellyfin-android-transcoder` `v1.1.13` release is recorded by the component repository and integration-test submodules. End users should install that release rather than copying a binary from this source tree.
+
 Agents rebuilding FFmpeg should run from the component repository:
 
 ```bash
