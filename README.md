@@ -63,9 +63,15 @@ The active branch is:
 mediacodec-surface-hwframes
 ```
 
-The Android app release does not require end users to build this repository. The `jellyfin-android-transcoder` APK/AAB already includes `libffmpeg.so` for `arm64-v8a`, `armeabi-v7a`, `x86`, and `x86_64`.
+## Install The Verified Release
 
-The FFmpeg revision used by the verified `jellyfin-android-transcoder` `v1.1.13` release is recorded by the component repository and integration-test submodules. End users should install that release rather than copying a binary from this source tree.
+Do not install files from this source tree. The Android app already includes `libffmpeg.so` for `arm64-v8a`, `armeabi-v7a`, `x86`, and `x86_64`.
+
+1. Install the [`v1.1.13` APK](https://github.com/doctorpangloss/jellyfin-android-transcoder/releases/latest/download/jellyfin-android-transcoder-1.1.13.apk) on the phone.
+2. Install the Jellyfin plugin from its [manifest](https://github.com/doctorpangloss/jellyfin-android-transcoder/releases/latest/download/manifest.json).
+3. Open **Dashboard -> Plugins -> Android Transcoder**, then scan its QR code with **Pair from QR** in the Android app.
+
+The [component README](https://github.com/doctorpangloss/jellyfin-android-transcoder#install-the-verified-release) shows the Jellyfin screens.
 
 Agents rebuilding FFmpeg should run from the component repository:
 
