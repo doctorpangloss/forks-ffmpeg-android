@@ -20,7 +20,13 @@ int ff_mediacodec_gl_process(AVCodecContext *avctx,
                              AVMediaCodecDeviceContext *device,
                              AVMediaCodecBuffer *buffer,
                              const AVFrame *frame,
-                             int tonemap);
+                             int tonemap,
+                             int tonemap_algorithm,
+                             double tonemap_param,
+                             double tonemap_desat,
+                             double tonemap_peak,
+                             int tonemap_transfer,
+                             int tonemap_matrix);
 
 void ff_mediacodec_gl_uninit(void **opaque);
 
