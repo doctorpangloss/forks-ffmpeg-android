@@ -198,11 +198,8 @@ static const char *fragment_shader =
     "        return mobius1(sig, param, peak);\n"
     "    return bt2390_1(sig, param, peak);\n"
     "}\n"
-    "vec3 bt709_oetf(vec3 color) {\n"
-    "    const float alpha = 1.09929682680944;\n"
-    "    const float beta = 0.018053968510807;\n"
-    "    vec3 x = max(color, vec3(0.0));\n"
-    "    return mix(x * 4.5, alpha * pow(x, vec3(0.45)) - vec3(alpha - 1.0), step(vec3(beta), x));\n"
+    "vec3 bt1886_inv_eotf(vec3 color) {\n"
+    "    return pow(max(color, vec3(0.0)), vec3(1.0 / 2.4));\n"
     "}\n"
     "void main() {\n"
     "    vec4 sample_color = texture2D(inputImageTexture, v_texcoord);\n"
@@ -230,7 +227,7 @@ static const char *fragment_shader =
     "                       pq_oetf_1(clamp(rgb.g * REFERENCE_WHITE_ALT / ST2084_MAX_LUMINANCE, 0.0, 1.0)),\n"
     "                       pq_oetf_1(clamp(rgb.b * REFERENCE_WHITE_ALT / ST2084_MAX_LUMINANCE, 0.0, 1.0)));\n"
     "        else\n"
-    "            rgb = bt709_oetf(clamp(rgb, 0.0, 1.0));\n"
+    "            rgb = bt1886_inv_eotf(clamp(rgb, 0.0, 1.0));\n"
     "    } else if (u_bt2020 != 0) {\n"
     "        rgb = clamp(bt2020_to_bt709 * rgb, 0.0, 1.0);\n"
     "    }\n"
@@ -453,9 +450,35 @@ int ff_mediacodec_gl_process(AVCodecContext *avctx,
     glUniform1i(p->sampler_loc, 0);
     glUniform1i(p->tonemap_loc, tonemap);
     glUniform1i(p->tonemap_algorithm_loc, tonemap_algorithm);
-    glUniform1f(p->tonemap_param_loc, isfinite(tonemap_param) ? (float)tonemap_param : 0.3f);
-    glUniform1f(p->tonemap_desat_loc, (float)FFMAX(tonemap_desat, 0.0));
-    glUniform1f(p->tonemap_peak_loc, tonemap_peak > 0.0 ? (float)tonemap_peak : 100.0f);
+    {
+        float effective_param;
+        double ref_white_scale = 100.0 / 203.0;
+        double effective_peak = tonemap_peak > 0.0
+            ? (tonemap_peak / 10.0) * ref_white_scale
+            : 10.0 * ref_white_scale;
+        if (effective_peak <= ref_white_scale)
+            effective_peak = 10.0 * ref_white_scale;
+
+        if (isfinite(tonemap_param)) {
+            if (tonemap_algorithm == 4)
+                effective_param = (float)((1.0 - tonemap_param) / tonemap_param);
+            else if (tonemap_algorithm == 7)
+                effective_param = (float)av_clipd(tonemap_param, 0.5, 2.0);
+            else
+                effective_param = (float)tonemap_param;
+        } else {
+            if (tonemap_algorithm == 2)
+                effective_param = 1.8f;
+            else if (tonemap_algorithm == 6)
+                effective_param = 0.3f;
+            else
+                effective_param = 1.0f;
+        }
+
+        glUniform1f(p->tonemap_param_loc, effective_param);
+        glUniform1f(p->tonemap_desat_loc, (float)FFMAX(tonemap_desat, 0.0));
+        glUniform1f(p->tonemap_peak_loc, (float)effective_peak);
+    }
     glUniform1i(p->tonemap_transfer_loc, tonemap_transfer);
     glUniform1i(p->tonemap_matrix_loc, tonemap_matrix);
     glUniform1i(p->trc_loc, frame->color_trc);
