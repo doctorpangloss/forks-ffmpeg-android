@@ -31,6 +31,7 @@
 #include "libavutil/common.h"
 #include "libavutil/frame.h"
 #include "libavutil/log.h"
+#include "libavutil/mastering_display_metadata.h"
 #include "libavutil/mem.h"
 #include "libavutil/pixfmt.h"
 
@@ -58,6 +59,8 @@ typedef struct MediaCodecGLProcessor {
     GLint tonemap_peak_loc;
     GLint tonemap_transfer_loc;
     GLint tonemap_matrix_loc;
+    GLint ref_white_loc;
+    GLint gamma_loc;
     GLint trc_loc;
     GLint bt2020_loc;
 
@@ -91,10 +94,11 @@ static const char *fragment_shader =
     "uniform float u_tonemap_peak;\n"
     "uniform int u_tonemap_transfer;\n"
     "uniform int u_tonemap_matrix;\n"
+    "uniform float u_ref_white;\n"
+    "uniform float u_gamma;\n"
     "uniform int u_trc;\n"
     "uniform int u_bt2020;\n"
     "const float FLOAT_EPS = 0.000001;\n"
-    "const float REFERENCE_WHITE_ALT = 203.0;\n"
     "const float ST2084_MAX_LUMINANCE = 10000.0;\n"
     "const mat3 bt2020_to_bt709 = mat3(\n"
     "    1.660491, -0.12455047, -0.01815076,\n"
@@ -166,11 +170,12 @@ static const char *fragment_shader =
     "    return (b * b + 2.0 * b * j + j * j) / (b - a) * (x + a) / (x + b);\n"
     "}\n"
     "float bt2390_1(float s, float knee_offset, float peak) {\n"
-    "    float peak_pq = pq_oetf_1(peak * REFERENCE_WHITE_ALT / ST2084_MAX_LUMINANCE);\n"
+    "    float ref_white = u_ref_white > 0.0 ? u_ref_white : 203.0;\n"
+    "    float peak_pq = pq_oetf_1(peak * ref_white / ST2084_MAX_LUMINANCE);\n"
     "    float scale = peak_pq > 0.0 ? 1.0 / peak_pq : 1.0;\n"
     "    float dst_peak = 1.0;\n"
-    "    float s_pq = pq_oetf_1(s * REFERENCE_WHITE_ALT / ST2084_MAX_LUMINANCE) * scale;\n"
-    "    float max_lum = pq_oetf_1(dst_peak * REFERENCE_WHITE_ALT / ST2084_MAX_LUMINANCE) * scale;\n"
+    "    float s_pq = pq_oetf_1(s * ref_white / ST2084_MAX_LUMINANCE) * scale;\n"
+    "    float max_lum = pq_oetf_1(dst_peak * ref_white / ST2084_MAX_LUMINANCE) * scale;\n"
     "    float ks = (1.0 + knee_offset) * max_lum - knee_offset;\n"
     "    float tb = (s_pq - ks) / max(1.0 - ks, FLOAT_EPS);\n"
     "    float tb2 = tb * tb;\n"
@@ -179,7 +184,7 @@ static const char *fragment_shader =
     "               (tb3 - 2.0 * tb2 + tb) * (1.0 - ks) +\n"
     "               (-2.0 * tb3 + 3.0 * tb2) * max_lum;\n"
     "    float sig = mix(pb, s_pq, 1.0 - step(ks, s_pq));\n"
-    "    return pq_eotf_1(sig * peak_pq) * ST2084_MAX_LUMINANCE / REFERENCE_WHITE_ALT;\n"
+    "    return pq_eotf_1(sig * peak_pq) * ST2084_MAX_LUMINANCE / ref_white;\n"
     "}\n"
     "float map_sig(float sig, float peak, float param) {\n"
     "    if (u_tonemap_algorithm == 0)\n"
@@ -199,14 +204,20 @@ static const char *fragment_shader =
     "    return bt2390_1(sig, param, peak);\n"
     "}\n"
     "vec3 bt1886_inv_eotf(vec3 color) {\n"
-    "    return pow(max(color, vec3(0.0)), vec3(1.0 / 2.4));\n"
+    "    float gamma = u_gamma > 0.0 ? u_gamma : 2.4;\n"
+    "    return pow(max(color, vec3(0.0)), vec3(1.0 / max(gamma, 1.0)));\n"
+    "}\n"
+    "vec3 srgb_oetf(vec3 color) {\n"
+    "    vec3 x = max(color, vec3(0.0));\n"
+    "    return mix(x * 12.92, 1.055 * pow(x, vec3(1.0 / 2.4)) - vec3(0.055), step(vec3(0.0031308), x));\n"
     "}\n"
     "void main() {\n"
     "    vec4 sample_color = texture2D(inputImageTexture, v_texcoord);\n"
     "    vec3 rgb = sample_color.rgb;\n"
+    "    float ref_white = u_ref_white > 0.0 ? u_ref_white : 203.0;\n"
     "    if (u_tonemap != 0) {\n"
     "        if (u_trc == 16)\n"
-    "            rgb = pq_eotf(rgb) * (ST2084_MAX_LUMINANCE / REFERENCE_WHITE_ALT);\n"
+    "            rgb = pq_eotf(rgb) * (ST2084_MAX_LUMINANCE / ref_white);\n"
     "        else if (u_trc == 18)\n"
     "            rgb = hlg_eotf(rgb) * 12.0;\n"
     "        if (u_bt2020 != 0)\n"
@@ -223,9 +234,13 @@ static const char *fragment_shader =
     "        if (u_tonemap_matrix == 9)\n"
     "            rgb = bt709_to_bt2020 * rgb;\n"
     "        if (u_tonemap_transfer == 16)\n"
-    "            rgb = vec3(pq_oetf_1(clamp(rgb.r * REFERENCE_WHITE_ALT / ST2084_MAX_LUMINANCE, 0.0, 1.0)),\n"
-    "                       pq_oetf_1(clamp(rgb.g * REFERENCE_WHITE_ALT / ST2084_MAX_LUMINANCE, 0.0, 1.0)),\n"
-    "                       pq_oetf_1(clamp(rgb.b * REFERENCE_WHITE_ALT / ST2084_MAX_LUMINANCE, 0.0, 1.0)));\n"
+    "            rgb = vec3(pq_oetf_1(clamp(rgb.r * ref_white / ST2084_MAX_LUMINANCE, 0.0, 1.0)),\n"
+    "                       pq_oetf_1(clamp(rgb.g * ref_white / ST2084_MAX_LUMINANCE, 0.0, 1.0)),\n"
+    "                       pq_oetf_1(clamp(rgb.b * ref_white / ST2084_MAX_LUMINANCE, 0.0, 1.0)));\n"
+    "        else if (u_tonemap_transfer == 13)\n"
+    "            rgb = srgb_oetf(clamp(rgb, 0.0, 1.0));\n"
+    "        else if (u_tonemap_transfer == 8)\n"
+    "            rgb = clamp(rgb, 0.0, 1.0);\n"
     "        else\n"
     "            rgb = bt1886_inv_eotf(clamp(rgb, 0.0, 1.0));\n"
     "    } else if (u_bt2020 != 0) {\n"
@@ -322,6 +337,8 @@ static int init_gl(AVCodecContext *avctx, AVMediaCodecDeviceContext *device,
     p->tonemap_peak_loc = glGetUniformLocation(p->program, "u_tonemap_peak");
     p->tonemap_transfer_loc = glGetUniformLocation(p->program, "u_tonemap_transfer");
     p->tonemap_matrix_loc = glGetUniformLocation(p->program, "u_tonemap_matrix");
+    p->ref_white_loc = glGetUniformLocation(p->program, "u_ref_white");
+    p->gamma_loc = glGetUniformLocation(p->program, "u_gamma");
     p->trc_loc = glGetUniformLocation(p->program, "u_trc");
     p->bt2020_loc = glGetUniformLocation(p->program, "u_bt2020");
 
@@ -377,17 +394,32 @@ static int acquire_latest_image(AImageReader *reader, AImage **image)
     return AVERROR(EAGAIN);
 }
 
+static double determine_signal_peak(const AVFrame *frame, double sdr_white)
+{
+    const AVFrameSideData *sd;
+    double peak = 0.0;
+
+    if ((sd = av_frame_get_side_data(frame, AV_FRAME_DATA_CONTENT_LIGHT_LEVEL))) {
+        const AVContentLightMetadata *clm = (const AVContentLightMetadata *)sd->data;
+        if (clm && clm->MaxCLL > 0)
+            peak = clm->MaxCLL / sdr_white;
+    }
+
+    if (peak <= 0.0 &&
+        (sd = av_frame_get_side_data(frame, AV_FRAME_DATA_MASTERING_DISPLAY_METADATA))) {
+        const AVMasteringDisplayMetadata *md = (const AVMasteringDisplayMetadata *)sd->data;
+        if (md && md->has_luminance && md->max_luminance.den > 0)
+            peak = av_q2d(md->max_luminance) / sdr_white;
+    }
+
+    return peak;
+}
+
 int ff_mediacodec_gl_process(AVCodecContext *avctx,
                              AVMediaCodecDeviceContext *device,
                              AVMediaCodecBuffer *buffer,
                              const AVFrame *frame,
-                             int tonemap,
-                             int tonemap_algorithm,
-                             double tonemap_param,
-                             double tonemap_desat,
-                             double tonemap_peak,
-                             int tonemap_transfer,
-                             int tonemap_matrix)
+                             const MediaCodecGLTonemapParams *tonemap)
 {
     static const GLfloat vertices[] = {
         -1.0f, -1.0f,
@@ -448,39 +480,50 @@ int ff_mediacodec_gl_process(AVCodecContext *avctx,
     glBindTexture(GL_TEXTURE_EXTERNAL_OES, p->texture);
     glEGLImageTargetTexture2DOES(GL_TEXTURE_EXTERNAL_OES, egl_image);
     glUniform1i(p->sampler_loc, 0);
-    glUniform1i(p->tonemap_loc, tonemap);
-    glUniform1i(p->tonemap_algorithm_loc, tonemap_algorithm);
+    glUniform1i(p->tonemap_loc, tonemap->enabled);
+    glUniform1i(p->tonemap_algorithm_loc, tonemap->algorithm);
     {
         float effective_param;
-        double ref_white_scale = 100.0 / 203.0;
-        double effective_peak = tonemap_peak > 0.0
-            ? (tonemap_peak / 10.0) * ref_white_scale
-            : 10.0 * ref_white_scale;
+        double ref_white = tonemap->ref_white > 0.0 ? tonemap->ref_white : 203.0;
+        double sdr_white = tonemap->sdr_white > 0.0 ? tonemap->sdr_white : 100.0;
+        double gamma_val = tonemap->gamma > 0.0 ? tonemap->gamma : 2.4;
+        double ref_white_scale = sdr_white / ref_white;
+        double effective_peak = 0.0;
+
+        if (tonemap->peak > 0.0) {
+            effective_peak = (tonemap->peak / 10.0) * ref_white_scale;
+        } else {
+            double detected = determine_signal_peak(frame, sdr_white);
+            if (detected > 0.0)
+                effective_peak = detected * ref_white_scale;
+        }
         if (effective_peak <= ref_white_scale)
             effective_peak = 10.0 * ref_white_scale;
 
-        if (isfinite(tonemap_param)) {
-            if (tonemap_algorithm == 4)
-                effective_param = (float)((1.0 - tonemap_param) / tonemap_param);
-            else if (tonemap_algorithm == 7)
-                effective_param = (float)av_clipd(tonemap_param, 0.5, 2.0);
+        if (isfinite(tonemap->param)) {
+            if (tonemap->algorithm == 4)
+                effective_param = (float)((1.0 - tonemap->param) / tonemap->param);
+            else if (tonemap->algorithm == 7)
+                effective_param = (float)av_clipd(tonemap->param, 0.5, 2.0);
             else
-                effective_param = (float)tonemap_param;
+                effective_param = (float)tonemap->param;
         } else {
-            if (tonemap_algorithm == 2)
+            if (tonemap->algorithm == 2)
                 effective_param = 1.8f;
-            else if (tonemap_algorithm == 6)
+            else if (tonemap->algorithm == 6)
                 effective_param = 0.3f;
             else
                 effective_param = 1.0f;
         }
 
         glUniform1f(p->tonemap_param_loc, effective_param);
-        glUniform1f(p->tonemap_desat_loc, (float)FFMAX(tonemap_desat, 0.0));
+        glUniform1f(p->tonemap_desat_loc, (float)FFMAX(tonemap->desat, 0.0));
         glUniform1f(p->tonemap_peak_loc, (float)effective_peak);
+        glUniform1f(p->ref_white_loc, (float)ref_white);
+        glUniform1f(p->gamma_loc, (float)gamma_val);
     }
-    glUniform1i(p->tonemap_transfer_loc, tonemap_transfer);
-    glUniform1i(p->tonemap_matrix_loc, tonemap_matrix);
+    glUniform1i(p->tonemap_transfer_loc, tonemap->transfer);
+    glUniform1i(p->tonemap_matrix_loc, tonemap->matrix);
     glUniform1i(p->trc_loc, frame->color_trc);
     glUniform1i(p->bt2020_loc, frame->colorspace == AVCOL_SPC_BT2020_NCL ||
                                 frame->colorspace == AVCOL_SPC_BT2020_CL);

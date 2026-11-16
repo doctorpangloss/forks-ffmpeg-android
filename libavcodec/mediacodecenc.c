@@ -105,6 +105,9 @@ typedef struct MediaCodecEncContext {
     double surface_tonemap_param;
     double surface_tonemap_desat;
     double surface_tonemap_peak;
+    double surface_tonemap_ref_white;
+    double surface_tonemap_sdr_white;
+    double surface_tonemap_gamma;
     AVMediaCodecDeviceContext *device_ctx;
 
     uint8_t *extradata;
@@ -873,15 +876,21 @@ static int mediacodec_send(AVCodecContext *avctx,
             int64_t time = av_rescale_q(frame->pts, avctx->time_base,
                                         (AVRational){ 1, 1000000000 });
             if (s->device_ctx && s->device_ctx->surface_processor_enabled) {
+                MediaCodecGLTonemapParams tm = {
+                    .enabled   = s->surface_tonemap,
+                    .algorithm = s->surface_tonemap_algorithm,
+                    .param     = s->surface_tonemap_param,
+                    .desat     = s->surface_tonemap_desat,
+                    .peak      = s->surface_tonemap_peak,
+                    .transfer  = s->surface_tonemap_transfer,
+                    .matrix    = s->surface_tonemap_matrix,
+                    .ref_white = s->surface_tonemap_ref_white,
+                    .sdr_white = s->surface_tonemap_sdr_white,
+                    .gamma     = s->surface_tonemap_gamma,
+                };
                 ret = ff_mediacodec_gl_process(avctx, s->device_ctx,
                                                (AVMediaCodecBuffer *)frame->data[3],
-                                               frame, s->surface_tonemap,
-                                               s->surface_tonemap_algorithm,
-                                               s->surface_tonemap_param,
-                                               s->surface_tonemap_desat,
-                                               s->surface_tonemap_peak,
-                                               s->surface_tonemap_transfer,
-                                               s->surface_tonemap_matrix);
+                                               frame, &tm);
                 if (ret < 0)
                     return ret;
             } else {
@@ -1149,7 +1158,10 @@ static const FFCodecDefault mediacodec_defaults[] = {
     { "bt2390",   "BT.2390 tone mapping",                      0, AV_OPT_TYPE_CONST, {.i64 = SURFACE_TONEMAP_BT2390}, 0, 0, VE, .unit = "surface_tonemap_algorithm" }, \
     { "surface_tonemap_transfer", "MediaCodec GLES tonemap output transfer",                              \
                     OFFSET(surface_tonemap_transfer), AV_OPT_TYPE_INT, {.i64 = AVCOL_TRC_BT709}, -1, INT_MAX, VE, .unit = "surface_tonemap_transfer" }, \
-    { "bt709",     "BT.709 transfer",                          0, AV_OPT_TYPE_CONST, {.i64 = AVCOL_TRC_BT709}, 0, 0, VE, .unit = "surface_tonemap_transfer" }, \
+    { "bt709",     "BT.709 / BT.1886 transfer",                0, AV_OPT_TYPE_CONST, {.i64 = AVCOL_TRC_BT709}, 0, 0, VE, .unit = "surface_tonemap_transfer" }, \
+    { "bt1886",    "BT.1886 inverse EOTF transfer",            0, AV_OPT_TYPE_CONST, {.i64 = AVCOL_TRC_BT709}, 0, 0, VE, .unit = "surface_tonemap_transfer" }, \
+    { "srgb",      "sRGB transfer",                            0, AV_OPT_TYPE_CONST, {.i64 = AVCOL_TRC_IEC61966_2_1}, 0, 0, VE, .unit = "surface_tonemap_transfer" }, \
+    { "linear",    "Linear transfer",                          0, AV_OPT_TYPE_CONST, {.i64 = AVCOL_TRC_LINEAR}, 0, 0, VE, .unit = "surface_tonemap_transfer" }, \
     { "bt2020",    "BT.2020 transfer",                         0, AV_OPT_TYPE_CONST, {.i64 = AVCOL_TRC_BT2020_10}, 0, 0, VE, .unit = "surface_tonemap_transfer" }, \
     { "smpte2084", "SMPTE ST 2084 transfer",                   0, AV_OPT_TYPE_CONST, {.i64 = AVCOL_TRC_SMPTE2084}, 0, 0, VE, .unit = "surface_tonemap_transfer" }, \
     { "surface_tonemap_matrix", "MediaCodec GLES tonemap output matrix",                                  \
@@ -1178,6 +1190,12 @@ static const FFCodecDefault mediacodec_defaults[] = {
                     OFFSET(surface_tonemap_desat), AV_OPT_TYPE_DOUBLE, {.dbl = 0.0}, 0.0, DBL_MAX, VE },    \
     { "surface_tonemap_peak", "MediaCodec GLES tonemap signal peak override",                             \
                     OFFSET(surface_tonemap_peak), AV_OPT_TYPE_DOUBLE, {.dbl = 0.0}, 0.0, DBL_MAX, VE },     \
+    { "surface_tonemap_ref_white", "MediaCodec GLES tonemap HDR reference white in nits",                   \
+                    OFFSET(surface_tonemap_ref_white), AV_OPT_TYPE_DOUBLE, {.dbl = 203.0}, 1.0, 10000.0, VE }, \
+    { "surface_tonemap_sdr_white", "MediaCodec GLES tonemap SDR target white in nits",                      \
+                    OFFSET(surface_tonemap_sdr_white), AV_OPT_TYPE_DOUBLE, {.dbl = 100.0}, 1.0, 1000.0, VE }, \
+    { "surface_tonemap_gamma", "MediaCodec GLES tonemap BT.1886 display gamma",                             \
+                    OFFSET(surface_tonemap_gamma), AV_OPT_TYPE_DOUBLE, {.dbl = 2.4}, 1.0, 4.0, VE },        \
     { "bitrate_mode", "Bitrate control method",                                                             \
                     OFFSET(bitrate_mode), AV_OPT_TYPE_INT, {.i64 = -1}, -1, INT_MAX, VE, .unit = "bitrate_mode" },  \
     { "cq", "Constant quality mode",                                                                                \

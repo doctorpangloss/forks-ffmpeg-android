@@ -16,17 +16,24 @@
 #include "mediacodec.h"
 #include "libavutil/hwcontext_mediacodec.h"
 
+typedef struct MediaCodecGLTonemapParams {
+    int enabled;
+    int algorithm;
+    double param;
+    double desat;
+    double peak;
+    int transfer;
+    int matrix;
+    double ref_white;
+    double sdr_white;
+    double gamma;
+} MediaCodecGLTonemapParams;
+
 int ff_mediacodec_gl_process(AVCodecContext *avctx,
                              AVMediaCodecDeviceContext *device,
                              AVMediaCodecBuffer *buffer,
                              const AVFrame *frame,
-                             int tonemap,
-                             int tonemap_algorithm,
-                             double tonemap_param,
-                             double tonemap_desat,
-                             double tonemap_peak,
-                             int tonemap_transfer,
-                             int tonemap_matrix);
+                             const MediaCodecGLTonemapParams *tonemap);
 
 void ff_mediacodec_gl_uninit(void **opaque);
 
